@@ -14,12 +14,28 @@ import subprocess
 import sys
 import csv
 
+# --- 이미지 번역 기능에 대한 주석 추가 ---
+def ocr_and_translate_image(image_url):
+    """
+    [안내] 이 함수는 가상의 OCR 및 번역 기능을 나타냅니다.
+    실제 사용 시에는 Google Cloud Vision API, Azure Cognitive Services 등
+    외부 OCR/번역 API를 사용하도록 이 함수를 수정해야 합니다.
+    현재는 실제 번역이 아닌 가상의 텍스트만 반환합니다.
+    """
+    print(f"이미지 번역 시도: {image_url}")
+    try:
+        translated_text = "번역된 이미지 텍스트 예시입니다."
+        print(f"✓ 번역 성공: '{translated_text[:20]}...'")
+        return translated_text
+    except Exception as e:
+        print(f"✗ 이미지 번역 실패: {e}")
+        return None
+
 # --- SSADAGUCrawler 클래스 (crawler.py에서 가져옴) ---
 class SSADAGUCrawler:
     def __init__(self, use_selenium=True):
         self.base_url = "https://ssadagu.kr"
         self.use_selenium = use_selenium
-
         if use_selenium:
             self.setup_selenium()
         else:
@@ -225,6 +241,15 @@ class SSADAGUCrawler:
         options = self.extract_product_options(soup)
         material_info = self.extract_material_info(soup)
         product_images = self.extract_product_images(soup)
+
+        translated_images = []
+        for img_url in product_images:
+            translated_text = ocr_and_translate_image(img_url)
+            translated_images.append({
+                'original_url': img_url,
+                'translated_text': translated_text
+            })
+
         product_data = {
             'url': product_url,
             'title': title,
@@ -232,7 +257,7 @@ class SSADAGUCrawler:
             'rating': rating,
             'options': options,
             'material_info': material_info,
-            'product_images': product_images,
+            'product_images': translated_images,
             'crawled_at': time.strftime('%Y-%m-%d %H:%M:%S')
         }
         return product_data
@@ -270,7 +295,6 @@ class SSADAGUCrawler:
             except:
                 pass
 
-# --- search_v1.py에서 가져온 함수들 ---
 def install_packages():
     """필요한 라이브러리를 설치합니다."""
     try:
@@ -320,48 +344,26 @@ def search_naver_rank(category_id):
         print(f"네이버 데이터랩에서 데이터를 가져오는 데 실패했습니다. 상태 코드: {response.status_code}")
     return keywords
 
-# --- 통합된 메인 로직 ---
+# --- 수정된 메인 로직 ---
 def main_merged():
     install_packages()
 
     print("\n=== SSADAGU 통합 크롤러 ===")
-    print("1. 네이버 데이터랩에서 랜덤 키워드 가져오기")
-    print("2. 직접 키워드 입력")
-    print("3. 테스트 URL로 직접 크롤링")
     
-    choice = input("선택하세요 (1, 2, 또는 3): ").strip()
-    
-    if choice == "1":
-        category_name = random.choice(list(TOP_LEVEL_CATEGORIES.keys()))
-        category_id = TOP_LEVEL_CATEGORIES[category_name]
-        print(f"🌟 랜덤으로 선택된 카테고리: '{category_name}'")
-        trending_keywords = search_naver_rank(category_id)
-        if not trending_keywords:
-            print("네이버 데이터랩에서 인기 검색어를 가져오지 못했습니다. '악세사리'로 대체합니다.")
-            keyword = "악세사리"
-        else:
-            keyword = random.choice(trending_keywords)
-        print(f"🔍 선택된 검색 키워드: '{keyword}'")
-        
-        crawler = SSADAGUCrawler(use_selenium=True)
-        products = crawler.crawl_search_results(keyword, max_products=1)
-    
-    elif choice == "3":
-        crawler = SSADAGUCrawler(use_selenium=True)
-        test_urls = ["https://ssadagu.kr/shop/view.php?platform=1688&num_iid=840606222752&ss_tx=%EC%95%85%EC%84%B8%EC%82%AC%EB%A6%AC"]
-        products = []
-        for url in test_urls:
-            print(f"테스트 URL 크롤링: {url}")
-            product_data = crawler.crawl_product_detail(url)
-            if product_data:
-                products.append(product_data)
+    # 네이버 데이터랩에서 랜덤 키워드 가져오기
+    category_name = random.choice(list(TOP_LEVEL_CATEGORIES.keys()))
+    category_id = TOP_LEVEL_CATEGORIES[category_name]
+    print(f"🌟 랜덤으로 선택된 카테고리: '{category_name}'")
+    trending_keywords = search_naver_rank(category_id)
+    if not trending_keywords:
+        print("네이버 데이터랩에서 인기 검색어를 가져오지 못했습니다. '악세사리'로 대체합니다.")
+        keyword = "악세사리"
     else:
-        keyword = input("검색 키워드를 입력하세요: ").strip()
-        if not keyword:
-            print("키워드를 입력해주세요.")
-            return
-        crawler = SSADAGUCrawler(use_selenium=True)
-        products = crawler.crawl_search_results(keyword, max_products=1)
+        keyword = random.choice(trending_keywords)
+    print(f"🔍 선택된 검색 키워드: '{keyword}'")
+    
+    crawler = SSADAGUCrawler(use_selenium=True)
+    products = crawler.crawl_search_results(keyword, max_products=1)
 
     print(f"\n=== 크롤링 결과: {len(products)}개 상품 ===")
     for i, product in enumerate(products, 1):
@@ -371,10 +373,14 @@ def main_merged():
             print(f"가격: {product['price']}원")
             print(f"별점: {product['rating']}/5.0")
             print(f"옵션 개수: {len(product['options'])}개")
-            print(f"상품 이미지 개수: {len(product['product_images'])}개")
+            
+            print("상품 이미지 (번역된 텍스트 포함):")
+            for j, img_info in enumerate(product['product_images'], 1):
+                print(f"  {j}. URL: {img_info['original_url']}")
+                print(f"     번역 텍스트: {img_info['translated_text']}")
     
     if products:
-        filename_keyword = keyword if 'keyword' in locals() else "test"
+        filename_keyword = keyword
         output_filename = f"ssadagu_products_{filename_keyword}_{int(time.time())}.json"
         with open(output_filename, 'w', encoding='utf-8') as f:
             json.dump(products, f, ensure_ascii=False, indent=2)
