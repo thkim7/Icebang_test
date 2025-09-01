@@ -273,7 +273,7 @@ class SSADAGUCrawler:
                 material_info[title] = info
         return material_info
 
-    def crawl_search_results(self, keyword, max_products=5):
+    def crawl_search_results(self, keyword, max_products=20):
         """검색 결과에서 상품들 크롤링 - 기존 방식 유지"""
         print(f"'{keyword}' 검색 시작...")
         if self.use_selenium:
@@ -416,7 +416,7 @@ def main_merged():
         print("네이버 데이터랩에서 인기 검색어를 가져오지 못했습니다. '악세사리'로 대체합니다.")
         keyword = "악세사리"
     else:
-        keyword = trending_keywords[0] # 가장 인기 있는 키워드 1개만 사용
+        keyword = random.choice(trending_keywords)
     print(f"🔍 선택된 검색 키워드: '{keyword}'")
     
     # 기본값을 Selenium으로 설정
@@ -451,8 +451,8 @@ def main_merged():
         keyword_embedding = analyzer.get_embedding(keyword)
         
         # URL 목록을 순회하며 각 상품의 제목을 얻고 유사도 분석 (이미지 OCR 없이)
-        for i, url in enumerate(search_results_urls[:5]):  # 최대 5개만 분석
-            print(f"\n상품 {i+1}/{min(len(search_results_urls), 5)} 분석 중...")
+        for i, url in enumerate(search_results_urls[:20]):  # 최대 5개만 분석
+            print(f"\n상품 {i+1}/{min(len(search_results_urls), 20)} 분석 중...")
             
             # 기본 정보만 크롤링 (이미지 처리 제외)
             basic_data = crawler.crawl_product_basic(url)
