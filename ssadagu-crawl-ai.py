@@ -19,6 +19,13 @@ import torch
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
+# KoNLPy 대신 Mecab 라이브러리 사용
+try:
+    from mecab import MeCab
+except ImportError:
+    print("Mecab 라이브러리를 찾을 수 없습니다. pip install python-mecab-ko 를 실행해주세요.")
+    MeCab = None
+
 # JSON 직렬화를 위한 커스텀 인코더 클래스
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -37,16 +44,18 @@ class SSADAGUCrawler:
         self.use_selenium = use_selenium
         self.konlpy_available = False
         
-        # KoNLPy 사용 가능 여부 확인
-        try:
-            from konlpy.tag import Okt
-            test_okt = Okt()
-            test_result = test_okt.morphs("테스트")
-            if test_result:
-                self.konlpy_available = True
-                print("KoNLPy 형태소 분석기 사용 가능")
-        except Exception as e:
-            print(f"KoNLPy 사용 불가 (규칙 기반으로 대체): {e}")
+        # KoNLPy 대신 Mecab 사용 가능 여부 확인
+        if MeCab:
+            try:
+                self.mecab = MeCab()
+                test_result = self.mecab.morphs("테스트")
+                if test_result:
+                    self.konlpy_available = True
+                    print("Mecab 형태소 분석기 사용 가능")
+            except Exception as e:
+                print(f"Mecab 사용 불가 (규칙 기반으로 대체): {e}")
+        else:
+            print("Mecab 라이브러리가 설치되지 않았습니다. 규칙 기반으로 대체합니다.")
         
         if use_selenium:
             self.setup_selenium()
@@ -290,7 +299,7 @@ class SSADAGUCrawler:
         return material_info
 
     def contains_keyword(self, title, keyword):
-        """안전한 키워드 매칭 (KoNLPy 오류 방지)"""
+        """안전한 키워드 매칭 (Mecab 사용)"""
         title_lower = title.lower().strip()
         keyword_lower = keyword.lower().strip()
         
@@ -298,19 +307,16 @@ class SSADAGUCrawler:
         if keyword_lower in title_lower:
             return True
         
-        # 2. 형태소 분석 (안전하게)
+        # 2. 형태소 분석 (Mecab 사용)
         try:
             if self.konlpy_available:
-                from konlpy.tag import Okt
-                okt = Okt()
+                keyword_morphs = self.mecab.nouns(keyword_lower)
+                if not keyword_morphs:
+                    keyword_morphs = self.mecab.morphs(keyword_lower)
                 
-                keyword_morphs = okt.nouns(keyword_lower)
-                if not keyword_morphs:  # 명사가 없으면 일반 형태소
-                    keyword_morphs = okt.morphs(keyword_lower)
-                
-                title_morphs = okt.nouns(title_lower)
+                title_morphs = self.mecab.nouns(title_lower)
                 if not title_morphs:
-                    title_morphs = okt.morphs(title_lower)
+                    title_morphs = self.mecab.morphs(title_lower)
                 
                 # 형태소 매칭
                 matched = 0
@@ -329,7 +335,7 @@ class SSADAGUCrawler:
         except Exception as e:
             print(f"    형태소 분석 오류, 규칙 기반으로 대체: {e}")
         
-        # 3. 규칙 기반 분석 (KoNLPy 실패시)
+        # 3. 규칙 기반 분석 (Mecab 실패시)
         return self._simple_keyword_match(title_lower, keyword_lower)
     
     def _simple_keyword_match(self, title, keyword):
@@ -396,22 +402,15 @@ def install_packages():
             "transformers", 
             "numpy", 
             "scikit-learn",
-            "protobuf"
+            "protobuf",
+            "python-mecab-ko" # Mecab 라이브러리 추가
         ]
         subprocess.check_call([sys.executable, "-m", "pip", "install"] + packages)
         print("라이브러리가 성공적으로 준비되었습니다.")
-        
-        # KoNLPy는 선택적 설치
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "konlpy"])
-            print("KoNLPy 설치 성공")
-        except:
-            print("KoNLPy 설치 실패 (선택사항) - 규칙 기반으로 대체")
-            
     except subprocess.CalledProcessError as e:
         print(f"라이브러리 설치 중 오류 발생: {e}")
         print("스크립트를 실행하려면 다음 명령어를 터미널에서 직접 실행해주세요:")
-        print("pip install beautifulsoup4 requests selenium torch transformers numpy scikit-learn protobuf")
+        print("pip install beautifulsoup4 requests selenium torch transformers numpy scikit-learn protobuf python-mecab-ko")
         sys.exit(1)
 
 # 네이버 데이터랩
@@ -452,9 +451,9 @@ def search_naver_rank(category_id):
 
 # 메인 함수 (원래대로 단순하게)
 def main_simplified():
-    """원래 코드와 동일한 단순한 크롤러 - KoNLPy 오류만 수정"""
+    """KoNLPy 오류를 해결한 크롤러"""
     install_packages()
-    print("\n=== SSADAGU 크롤러 (KoNLPy 오류 수정) ===")
+    print("\n=== SSADAGU 크롤러 (Mecab 적용) ===")
 
     crawler = SSADAGUCrawler(use_selenium=True)
     analyzer = SimilarityAnalyzer()
