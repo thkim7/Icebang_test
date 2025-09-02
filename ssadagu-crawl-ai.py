@@ -30,11 +30,24 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super(NumpyEncoder, self).default(obj)
 
-# SSADAGUCrawler 클래스 (기존 코드 유지)
+# SSADAGUCrawler 클래스 (KoNLPy 오류 수정)
 class SSADAGUCrawler:
     def __init__(self, use_selenium=True):
         self.base_url = "https://ssadagu.kr"
         self.use_selenium = use_selenium
+        self.konlpy_available = False
+        
+        # KoNLPy 사용 가능 여부 확인
+        try:
+            from konlpy.tag import Okt
+            test_okt = Okt()
+            test_result = test_okt.morphs("테스트")
+            if test_result:
+                self.konlpy_available = True
+                print("KoNLPy 형태소 분석기 사용 가능")
+        except Exception as e:
+            print(f"KoNLPy 사용 불가 (규칙 기반으로 대체): {e}")
+        
         if use_selenium:
             self.setup_selenium()
         else:
@@ -190,7 +203,6 @@ class SSADAGUCrawler:
                 'crawled_at': time.strftime('%Y-%m-%d %H:%M:%S')
             }
             
-            # 이미지는 기본적으로 포함하지 않음 (요청시에만)
             if include_images:
                 print("이미지 정보 추출 중...")
                 product_images = self.extract_product_images(soup)
@@ -278,10 +290,64 @@ class SSADAGUCrawler:
         return material_info
 
     def contains_keyword(self, title, keyword):
-        """제목에 키워드가 포함되어 있는지 확인"""
+        """안전한 키워드 매칭 (KoNLPy 오류 방지)"""
         title_lower = title.lower().strip()
         keyword_lower = keyword.lower().strip()
-        return keyword_lower in title_lower
+        
+        # 1. 완전 포함 검사
+        if keyword_lower in title_lower:
+            return True
+        
+        # 2. 형태소 분석 (안전하게)
+        try:
+            if self.konlpy_available:
+                from konlpy.tag import Okt
+                okt = Okt()
+                
+                keyword_morphs = okt.nouns(keyword_lower)
+                if not keyword_morphs:  # 명사가 없으면 일반 형태소
+                    keyword_morphs = okt.morphs(keyword_lower)
+                
+                title_morphs = okt.nouns(title_lower)
+                if not title_morphs:
+                    title_morphs = okt.morphs(title_lower)
+                
+                # 형태소 매칭
+                matched = 0
+                for kw in keyword_morphs:
+                    if len(kw) >= 2:
+                        for tw in title_morphs:
+                            if kw == tw or kw in tw or tw in kw:
+                                matched += 1
+                                break
+                
+                match_ratio = matched / len(keyword_morphs) if keyword_morphs else 0
+                if match_ratio >= 0.4:
+                    print(f"    형태소 매칭 성공: {matched}/{len(keyword_morphs)} = {match_ratio:.3f}")
+                    return True
+                    
+        except Exception as e:
+            print(f"    형태소 분석 오류, 규칙 기반으로 대체: {e}")
+        
+        # 3. 규칙 기반 분석 (KoNLPy 실패시)
+        return self._simple_keyword_match(title_lower, keyword_lower)
+    
+    def _simple_keyword_match(self, title, keyword):
+        """간단한 키워드 매칭"""
+        # 공백으로 분리
+        title_words = title.split()
+        keyword_words = keyword.split()
+        
+        matched = 0
+        for kw in keyword_words:
+            if len(kw) >= 2:
+                for tw in title_words:
+                    if kw in tw or tw in kw:
+                        matched += 1
+                        break
+        
+        match_ratio = matched / len(keyword_words) if keyword_words else 0
+        return match_ratio >= 0.3
 
     def __del__(self):
         if hasattr(self, 'driver'):
@@ -290,7 +356,7 @@ class SSADAGUCrawler:
             except:
                 pass
 
-# 텍스트 유사도 분석기 (이미지 관련 제거)
+# 텍스트 유사도 분석기
 class SimilarityAnalyzer:
     def __init__(self):
         try:
@@ -318,7 +384,7 @@ class SimilarityAnalyzer:
         embedding2 = self.get_embedding(text2)
         return cosine_similarity(embedding1, embedding2)[0][0]
 
-# 설치 함수 및 네이버 데이터랩 함수
+# 라이브러리 설치 함수
 def install_packages():
     try:
         print("필수 라이브러리 설치를 시도합니다...")
@@ -334,12 +400,21 @@ def install_packages():
         ]
         subprocess.check_call([sys.executable, "-m", "pip", "install"] + packages)
         print("라이브러리가 성공적으로 준비되었습니다.")
+        
+        # KoNLPy는 선택적 설치
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "konlpy"])
+            print("KoNLPy 설치 성공")
+        except:
+            print("KoNLPy 설치 실패 (선택사항) - 규칙 기반으로 대체")
+            
     except subprocess.CalledProcessError as e:
         print(f"라이브러리 설치 중 오류 발생: {e}")
         print("스크립트를 실행하려면 다음 명령어를 터미널에서 직접 실행해주세요:")
         print("pip install beautifulsoup4 requests selenium torch transformers numpy scikit-learn protobuf")
         sys.exit(1)
 
+# 네이버 데이터랩
 TOP_LEVEL_CATEGORIES = {
     "패션의류": "50000000", "패션잡화": "50000001", "화장품/미용": "50000002",
     "디지털/가전": "50000003", "가구/인테리어": "50000004", "출산/육아": "50000005",
@@ -375,11 +450,11 @@ def search_naver_rank(category_id):
         print(f"네이버 데이터랩에서 데이터를 가져오는 데 실패했습니다: {e}")
     return keywords
 
-# 간소화된 메인 함수
+# 메인 함수 (원래대로 단순하게)
 def main_simplified():
-    """간소화된 크롤러 - 키워드 포함 우선, 텍스트 유사도 보완"""
+    """원래 코드와 동일한 단순한 크롤러 - KoNLPy 오류만 수정"""
     install_packages()
-    print("\n=== SSADAGU 간소화된 크롤러 ===")
+    print("\n=== SSADAGU 크롤러 (KoNLPy 오류 수정) ===")
 
     crawler = SSADAGUCrawler(use_selenium=True)
     analyzer = SimilarityAnalyzer()
@@ -416,7 +491,7 @@ def main_simplified():
             all_products = []
             keyword_included_products = []
             
-            for i, url in enumerate(search_results_urls[:20]):  # 최대 20개
+            for i, url in enumerate(search_results_urls[:20]):
                 basic_data = crawler.crawl_product_basic(url)
                 if not basic_data or basic_data['title'] == "제목 없음":
                     continue
@@ -424,27 +499,25 @@ def main_simplified():
                 print(f"상품 {i+1}: {basic_data['title'][:50]}")
                 all_products.append(basic_data)
                 
-                # 키워드 포함 여부 확인
+                # 키워드 포함 여부 확인 (수정된 매칭 사용)
                 if crawler.contains_keyword(basic_data['title'], keyword):
                     keyword_included_products.append(basic_data)
-                    print(f"  🔍 키워드 '{keyword}' 포함됨!")
+                    print(f"  🔍 키워드 '{keyword}' 매칭됨!")
 
             print(f"\n전체 유효 상품: {len(all_products)}개")
-            print(f"키워드 포함 상품: {len(keyword_included_products)}개")
+            print(f"키워드 매칭 상품: {len(keyword_included_products)}개")
 
             # 2단계: 선택 로직
             selected_product = None
             selection_reason = ""
 
             if len(keyword_included_products) == 1:
-                # 키워드 포함 상품이 1개 → 바로 선택
                 selected_product = keyword_included_products[0]
-                selection_reason = "키워드 포함 상품 1개 → 바로 선택"
+                selection_reason = "키워드 매칭 상품 1개 → 바로 선택"
                 print(f"✅ {selection_reason}")
                 
             elif len(keyword_included_products) > 1:
-                # 키워드 포함 상품이 여러개 → 텍스트 유사도 비교
-                print("🔄 키워드 포함 상품 여러개 → 텍스트 유사도 비교")
+                print("🔄 키워드 매칭 상품 여러개 → 텍스트 유사도 비교")
                 keyword_embedding = analyzer.get_embedding(keyword)
                 best_similarity = 0.0
                 
@@ -457,12 +530,11 @@ def main_simplified():
                         best_similarity = similarity
                         selected_product = product
                         
-                selection_reason = f"키워드 포함 상품 중 최고 유사도({best_similarity:.4f})"
+                selection_reason = f"키워드 매칭 상품 중 최고 유사도({best_similarity:.4f})"
                 print(f"✅ {selection_reason}")
                 
             elif len(keyword_included_products) == 0:
-                # 키워드 포함 상품이 없음 → 전체 텍스트 유사도 검증
-                print("🔄 키워드 포함 상품 없음 → 전체 텍스트 유사도 검증")
+                print("🔄 키워드 매칭 상품 없음 → 전체 텍스트 유사도 검증")
                 keyword_embedding = analyzer.get_embedding(keyword)
                 best_similarity = 0.0
                 
@@ -509,7 +581,7 @@ def main_simplified():
         print(f"별점: {best_match_product['rating']}")
         print(f"선택 이유: {best_match_product['selection_reason']}")
 
-        output_filename = f"simplified_crawler_result_{int(time.time())}.json"
+        output_filename = f"fixed_crawler_result_{int(time.time())}.json"
         with open(output_filename, 'w', encoding='utf-8') as f:
             json.dump(best_match_product, f, ensure_ascii=False, indent=2, cls=NumpyEncoder)
         print(f"결과 저장 완료: {output_filename}")
