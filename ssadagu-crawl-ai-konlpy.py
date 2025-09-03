@@ -19,16 +19,6 @@ import torch
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
-# MeCab 라이브러리 사용 (수정된 부분)
-try:
-    import MeCab
-    print("MeCab 라이브러리 로딩 성공")
-    MECAB_AVAILABLE = True
-except ImportError:
-    print("MeCab 라이브러리를 찾을 수 없습니다. pip install mecab-python3 를 실행해주세요.")
-    MeCab = None
-    MECAB_AVAILABLE = False
-
 # JSON 직렬화를 위한 커스텀 인코더 클래스
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -40,28 +30,23 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super(NumpyEncoder, self).default(obj)
 
-# SSADAGUCrawler 클래스 (MeCab 수정)
+# SSADAGUCrawler 클래스
 class SSADAGUCrawler:
     def __init__(self, use_selenium=True):
         self.base_url = "https://ssadagu.kr"
         self.use_selenium = use_selenium
         self.konlpy_available = False
         
-        # MeCab 사용 가능 여부 확인 (수정된 부분)
-        if MECAB_AVAILABLE:
-            try:
-                self.mecab = MeCab.Tagger()
-                # 테스트 실행
-                test_result = self.mecab.parse("테스트")
-                if test_result and test_result.strip():
-                    self.konlpy_available = True
-                    print("MeCab 형태소 분석기 사용 가능")
-                else:
-                    print("MeCab 테스트 실패")
-            except Exception as e:
-                print(f"MeCab 사용 불가 (규칙 기반으로 대체): {e}")
-        else:
-            print("MeCab 라이브러리가 설치되지 않았습니다. 규칙 기반으로 대체합니다.")
+        # KoNLPy 사용 가능 여부 확인
+        try:
+            from konlpy.tag import Okt
+            test_okt = Okt()
+            test_result = test_okt.morphs("테스트")
+            if test_result:
+                self.konlpy_available = True
+                print("KoNLPy 형태소 분석기 사용 가능")
+        except Exception as e:
+            print(f"KoNLPy 사용 불가 (규칙 기반으로 대체): {e}")
         
         if use_selenium:
             self.setup_selenium()
@@ -305,7 +290,7 @@ class SSADAGUCrawler:
         return material_info
 
     def contains_keyword(self, title, keyword):
-        """안전한 키워드 매칭 (MeCab 사용) - 수정된 부분"""
+        """안전한 키워드 매칭 (KoNLPy 오류 방지)"""
         title_lower = title.lower().strip()
         keyword_lower = keyword.lower().strip()
         
@@ -313,37 +298,24 @@ class SSADAGUCrawler:
         if keyword_lower in title_lower:
             return True
         
-        # 2. 형태소 분석 (MeCab 사용) - 수정된 부분
+        # 2. 형태소 분석 (안전하게)
         try:
             if self.konlpy_available:
-                # 키워드 형태소 분석
-                keyword_result = self.mecab.parse(keyword_lower)
-                keyword_morphs = []
-                for line in keyword_result.split('\n'):
-                    if line == 'EOS' or line == '':
-                        continue
-                    parts = line.split('\t')
-                    if len(parts) >= 1:
-                        morph = parts[0].strip()
-                        if len(morph) >= 1:  # 최소 길이 조건 완화
-                            keyword_morphs.append(morph)
+                from konlpy.tag import Okt
+                okt = Okt()
                 
-                # 제목 형태소 분석
-                title_result = self.mecab.parse(title_lower)
-                title_morphs = []
-                for line in title_result.split('\n'):
-                    if line == 'EOS' or line == '':
-                        continue
-                    parts = line.split('\t')
-                    if len(parts) >= 1:
-                        morph = parts[0].strip()
-                        if len(morph) >= 1:  # 최소 길이 조건 완화
-                            title_morphs.append(morph)
+                keyword_morphs = okt.nouns(keyword_lower)
+                if not keyword_morphs:  # 명사가 없으면 일반 형태소
+                    keyword_morphs = okt.morphs(keyword_lower)
+                
+                title_morphs = okt.nouns(title_lower)
+                if not title_morphs:
+                    title_morphs = okt.morphs(title_lower)
                 
                 # 형태소 매칭
                 matched = 0
                 for kw in keyword_morphs:
-                    if len(kw) >= 2:  # 의미있는 형태소만 검사
+                    if len(kw) >= 2:
                         for tw in title_morphs:
                             if kw == tw or kw in tw or tw in kw:
                                 matched += 1
@@ -357,7 +329,7 @@ class SSADAGUCrawler:
         except Exception as e:
             print(f"    형태소 분석 오류, 규칙 기반으로 대체: {e}")
         
-        # 3. 규칙 기반 분석 (MeCab 실패시)
+        # 3. 규칙 기반 분석 (KoNLPy 실패시)
         return self._simple_keyword_match(title_lower, keyword_lower)
     
     def _simple_keyword_match(self, title, keyword):
@@ -424,15 +396,22 @@ def install_packages():
             "transformers", 
             "numpy", 
             "scikit-learn",
-            "protobuf",
-            "mecab-python3"  # 수정된 부분
+            "protobuf"
         ]
         subprocess.check_call([sys.executable, "-m", "pip", "install"] + packages)
         print("라이브러리가 성공적으로 준비되었습니다.")
+        
+        # KoNLPy는 선택적 설치
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "konlpy"])
+            print("KoNLPy 설치 성공")
+        except:
+            print("KoNLPy 설치 실패 (선택사항) - 규칙 기반으로 대체")
+            
     except subprocess.CalledProcessError as e:
         print(f"라이브러리 설치 중 오류 발생: {e}")
         print("스크립트를 실행하려면 다음 명령어를 터미널에서 직접 실행해주세요:")
-        print("pip install beautifulsoup4 requests selenium torch transformers numpy scikit-learn protobuf mecab-python3")
+        print("pip install beautifulsoup4 requests selenium torch transformers numpy scikit-learn protobuf")
         sys.exit(1)
 
 # 네이버 데이터랩
@@ -471,16 +450,16 @@ def search_naver_rank(category_id):
         print(f"네이버 데이터랩에서 데이터를 가져오는 데 실패했습니다: {e}")
     return keywords
 
-# 메인 함수 (MeCab 수정 적용)
+# 메인 함수 (원래대로 단순하게)
 def main_simplified():
-    """MeCab 수정이 적용된 크롤러"""
+    """원래 코드와 동일한 단순한 크롤러 - KoNLPy 오류만 수정"""
     install_packages()
-    print("\n=== SSADAGU 크롤러 (MeCab 수정 적용) ===")
+    print("\n=== SSADAGU 크롤러 (KoNLPy 오류 수정) ===")
 
     crawler = SSADAGUCrawler(use_selenium=True)
     analyzer = SimilarityAnalyzer()
 
-    TEXT_SIMILARITY_THRESHOLD = 0.5
+    TEXT_SIMILARITY_THRESHOLD = 0.6
     MAX_RETRY = 5
 
     best_match_product = None
